@@ -26,11 +26,13 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📸 Foto 3x4 Studio")
-st.write("Ajuste automático e Alta Resolução.")
+st.write("Ajuste a posição e faça o recorte.")
 
 # --- Estados ---
 if 'rotation' not in st.session_state: st.session_state.rotation = 0
 if 'mirror' not in st.session_state: st.session_state.mirror = False
+if 'pan_x' not in st.session_state: st.session_state.pan_x = 0
+if 'pan_y' not in st.session_state: st.session_state.pan_y = 0
 if 'last_file' not in st.session_state: st.session_state.last_file = None
 if 'processed_image' not in st.session_state: st.session_state.processed_image = None
 if 'smart_crop_done' not in st.session_state: st.session_state.smart_crop_done = False
@@ -40,10 +42,7 @@ if 'use_smart_crop' not in st.session_state: st.session_state.use_smart_crop = T
 # --- Funções ---
 
 def smart_face_center(pil_image):
-    """
-    Detecta o rosto e faz um recorte centralizado, mas com MAIS FOLGA
-    para garantir que caibam ombros e cabelo.
-    """
+    """Detecta rosto e centraliza com margem de segurança"""
     img_cv = np.array(pil_image)
     if img_cv.shape[2] == 4:
         img_cv = cv2.cvtColor(img_cv, cv2.COLOR_RGBA2RGB)
@@ -53,37 +52,36 @@ def smart_face_center(pil_image):
     faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(50, 50))
 
     if len(faces) == 0:
-        return pil_image # Se não achar, devolve a original
+        return pil_image
 
-    # Pega o maior rosto
     x, y, w, h = max(faces, key=lambda b: b[2] * b[3])
-
     height_img, width_img, _ = img_cv.shape
     
-    # --- AJUSTE DE FOLGA (MATEMÁTICA NOVA) ---
     center_x = x + w // 2
-    
-    # Largura: 4x a largura do rosto (garante ombros largos)
     crop_w = int(w * 4.0) 
-    
-    # Altura: 6x a altura do rosto (garante teto e busto)
     crop_h = int(h * 6.0) 
-
-    # Coordenadas:
-    # Topo: Sobe 1.5x a altura do rosto a partir do início da testa (y) 
-    # Isso dá bastante espaço para cabelo/quepe
+    
     left = max(0, center_x - crop_w // 2)
     top = max(0, y - int(h * 1.5)) 
     
     right = min(width_img, left + crop_w)
     bottom = min(height_img, top + crop_h)
 
-    # Se o corte ficar muito estreito (canto da imagem), ajusta o left
     if (right - left) < crop_w:
         left = max(0, right - crop_w)
     
-    pil_cropped = pil_image.crop((left, top, right, bottom))
-    return pil_cropped
+    return pil_image.crop((left, top, right, bottom))
+
+def shift_image(img, x_offset, y_offset):
+    """Move a imagem dentro do quadro (Pan)"""
+    if x_offset == 0 and y_offset == 0:
+        return img
+    
+    # Cria fundo branco do mesmo tamanho
+    bg = Image.new("RGB", img.size, (255, 255, 255))
+    # Cola a imagem deslocada
+    bg.paste(img, (x_offset, y_offset))
+    return bg
 
 def resize_for_display(image, max_width=500):
     w, h = image.size
@@ -101,13 +99,11 @@ def process_high_res(image_to_process, crop_box, scale_factor):
     
     high_res_crop = image_to_process.crop((left, top, left + width, top + height))
     img_no_bg = remove(high_res_crop)
-    
     new_image = Image.new("RGBA", img_no_bg.size, "WHITE")
     new_image.paste(img_no_bg, (0, 0), img_no_bg)
-    
     return new_image.convert("RGB").resize((354, 472), Image.Resampling.LANCZOS)
 
-# --- ÁREA DE INPUT ---
+# --- INPUT ---
 st.divider()
 tab1, tab2 = st.tabs(["📂 Galeria", "📸 Câmera"])
 
@@ -119,7 +115,6 @@ with tab1:
     if uploaded_file:
         source_file = uploaded_file
         source_name = uploaded_file.name
-
 with tab2:
     camera_file = st.camera_input("Foto", label_visibility="collapsed")
     if camera_file:
@@ -129,74 +124,94 @@ with tab2:
 # --- LÓGICA ---
 if source_file is not None:
     if st.session_state.last_file != source_name:
-        # Reset total quando muda a foto
+        # Reset Total
         st.session_state.rotation = 0
         st.session_state.mirror = False
+        st.session_state.pan_x = 0
+        st.session_state.pan_y = 0
         st.session_state.processed_image = None
         st.session_state.smart_crop_done = False
         st.session_state.pre_cropped_image = None
-        st.session_state.use_smart_crop = True # Tenta usar o smart crop por padrão
+        st.session_state.use_smart_crop = True
         st.session_state.last_file = source_name
 
-    # 1. Preparar original
+    # 1. Carrega e prepara base
     original_image = Image.open(source_file)
     original_image = ImageOps.exif_transpose(original_image)
     if st.session_state.mirror:
         original_image = ImageOps.mirror(original_image)
     rotated_original = original_image.rotate(st.session_state.rotation, expand=True)
 
-    # 2. Lógica de Smart Crop
-    # Só executa se estiver habilitado E ainda não tiver sido feito
+    # 2. Smart Crop (Zoom Automático)
     working_image = rotated_original
-    
     if st.session_state.use_smart_crop:
         if not st.session_state.smart_crop_done:
             with st.spinner("Centralizando rosto..."):
                 st.session_state.pre_cropped_image = smart_face_center(rotated_original)
                 st.session_state.smart_crop_done = True
-        
-        # Se o crop foi feito, usamos ele. Se não achou rosto, usa a original.
         if st.session_state.pre_cropped_image:
             working_image = st.session_state.pre_cropped_image
 
-    # 3. Resize para visualização
+    # 3. APLICA MOVIMENTO (PAN) - NOVO!
+    # Permite mover a imagem já recortada ou a original
+    if st.session_state.pan_x != 0 or st.session_state.pan_y != 0:
+        working_image = shift_image(working_image, st.session_state.pan_x, st.session_state.pan_y)
+
+    # 4. Resize Display
     display_image, scale = resize_for_display(working_image, max_width=500)
 
-    # --- EDIÇÃO ---
+    # --- CONTROLES E EDIÇÃO ---
     st.divider()
+    
     with st.container(border=True):
-        st.markdown("**Ajuste o Enquadramento:**")
-        
-        # Botões de Controle
+        st.markdown("**1. Ajustes Gerais:**")
         c1, c2, c3 = st.columns(3)
-        with c1:
-            if st.button("↺ Esq."):
+        with c1: 
+            if st.button("↺ Esq."): 
                 st.session_state.rotation += 90
-                st.session_state.smart_crop_done = False 
+                st.session_state.smart_crop_done = False
                 st.rerun()
-        with c2:
-            if st.button("↔ Espelhar"):
+        with c2: 
+            if st.button("↔ Espelhar"): 
                 st.session_state.mirror = not st.session_state.mirror
                 st.session_state.smart_crop_done = False
                 st.rerun()
-        with c3:
-            if st.button("Dir. ↻"):
+        with c3: 
+            if st.button("Dir. ↻"): 
                 st.session_state.rotation -= 90
                 st.session_state.smart_crop_done = False
                 st.rerun()
-        
-        # Botão para DESATIVAR o zoom se a IA errar
+
+        # --- NOVA ÁREA: MOVER A IMAGEM ---
+        with st.expander("🛠️ Mover Imagem (Ajuste Fino)", expanded=False):
+            st.caption("Se o rosto não ficou no centro, mova a imagem:")
+            
+            # Sliders para mover X e Y
+            col_pan1, col_pan2 = st.columns(2)
+            with col_pan1:
+                st.session_state.pan_x = st.slider("↔️ Horizontal", -200, 200, st.session_state.pan_x, step=10)
+            with col_pan2:
+                st.session_state.pan_y = st.slider("↕️ Vertical", -200, 200, st.session_state.pan_y, step=10)
+            
+            if st.button("Zerar Posição"):
+                st.session_state.pan_x = 0
+                st.session_state.pan_y = 0
+                st.rerun()
+
+        # Botão Reset Zoom
         if st.session_state.use_smart_crop:
-            if st.button("🔍 Mostrar Imagem Completa (Sem Zoom)", type="secondary"):
+            if st.button("🔍 Cancelar Zoom Automático", type="secondary"):
                 st.session_state.use_smart_crop = False
                 st.session_state.smart_crop_done = False
+                st.session_state.pan_x = 0
+                st.session_state.pan_y = 0
                 st.rerun()
         else:
-            if st.button("🪄 Tentar Zoom Automático", type="secondary"):
+            if st.button("🪄 Ativar Zoom Automático", type="secondary"):
                 st.session_state.use_smart_crop = True
                 st.rerun()
 
-        # Cropper
+        st.markdown("**2. Recorte Final:**")
         crop_box = st_cropper(
             display_image,
             realtime_update=True,
@@ -206,7 +221,7 @@ if source_file is not None:
         )
         
         if st.button("✨ Processar Foto 3x4", type="primary"):
-            with st.spinner("Finalizando..."):
+            with st.spinner("Gerando imagem final..."):
                 try:
                     result = process_high_res(working_image, crop_box, scale)
                     st.session_state.processed_image = result
@@ -216,11 +231,10 @@ if source_file is not None:
     # --- RESULTADO ---
     if st.session_state.processed_image is not None:
         st.divider()
-        st.markdown("#### ✅ Foto Pronta")
-        
-        col1, col2 = st.columns([1, 1.5], gap="medium")
+        st.markdown("#### ✅ Resultado")
+        col1, col2 = st.columns([1, 1.5])
         with col1:
-            st.image(st.session_state.processed_image, caption="Preview", use_container_width=True)
+            st.image(st.session_state.processed_image, caption="Final", use_container_width=True)
         with col2:
             st.success("Sucesso!")
             buf = io.BytesIO()
