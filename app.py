@@ -189,7 +189,7 @@ if source_file is not None:
             # Sliders para mover X e Y
             col_pan1, col_pan2 = st.columns(2)
             with col_pan1:
-                st.session_state.pan_x = st.slider("↔️ Horizontal", -200, 200, st.session_state.pan_x, step=10)
+                st.session_state.pan_x = st.slider("↔️ Horizontal", -400, 400, st.session_state.pan_x, step=10)
             with col_pan2:
                 st.session_state.pan_y = st.slider("↕️ Vertical", -200, 200, st.session_state.pan_y, step=10)
             
@@ -241,3 +241,4 @@ if source_file is not None:
             st.session_state.processed_image.save(buf, format="PNG", optimize=True)
             byte_im = buf.getvalue()
             st.download_button("📥 Baixar PNG", data=byte_im, file_name="foto_3x4.png", mime="image/png", type="primary")
+
