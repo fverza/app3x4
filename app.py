@@ -10,7 +10,6 @@ st.set_page_config(page_title="Criador de Foto 3x4", page_icon="📸", layout="w
 st.title("📸 Gerador de Foto 3x4 Profissional")
 
 # --- Lógica de Estado (Session State) ---
-# Isso serve para o app "lembrar" a rotação atual
 if 'rotation' not in st.session_state:
     st.session_state.rotation = 0
 if 'last_file' not in st.session_state:
@@ -28,17 +27,17 @@ def add_white_background(image_input):
 uploaded_file = st.file_uploader("Escolha uma imagem", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
-    # Verifica se o usuário trocou de arquivo para resetar a rotação
-    if st.session_state.last_file != uploaded_file.id:
+    # CORREÇÃO AQUI: Usamos .name em vez de .id
+    # Verifica se o usuário trocou de arquivo (pelo nome) para resetar a rotação
+    if st.session_state.last_file != uploaded_file.name:
         st.session_state.rotation = 0
-        st.session_state.last_file = uploaded_file.id
+        st.session_state.last_file = uploaded_file.name
 
-    # Carrega a imagem e corrige orientação EXIF (importante para fotos de celular)
+    # Carrega a imagem e corrige orientação EXIF
     original_image = Image.open(uploaded_file)
     original_image = ImageOps.exif_transpose(original_image)
     
     # Aplica a rotação armazenada no estado
-    # expand=True garante que a imagem não seja cortada ao girar
     rotated_image = original_image.rotate(st.session_state.rotation, expand=True)
 
     col1, col2 = st.columns(2)
@@ -51,14 +50,13 @@ if uploaded_file is not None:
         with col_rot1:
             if st.button("↺ Girar Esq."):
                 st.session_state.rotation += 90
-                st.rerun() # Recarrega a página para aplicar o giro
+                st.rerun() 
         with col_rot2:
             if st.button("↻ Girar Dir."):
                 st.session_state.rotation -= 90
                 st.rerun()
         
         # --- Ferramenta de Corte ---
-        # Agora passamos a 'rotated_image' para o cortador
         cropped_img = st_cropper(
             rotated_image,
             realtime_update=True,
