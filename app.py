@@ -4,97 +4,139 @@ from PIL import Image, ImageOps
 import io
 from streamlit_cropper import st_cropper
 
-# Configuração da página
-st.set_page_config(page_title="Criador de Foto 3x4", page_icon="📸", layout="wide")
+# --- Configuração da Página ---
+st.set_page_config(
+    page_title="Foto 3x4 Studio", 
+    page_icon="📸", 
+    layout="centered", # 'centered' fica melhor em celular e foca a atenção no PC
+    initial_sidebar_state="collapsed"
+)
 
-st.title("📸 Gerador de Foto 3x4 Profissional")
+# --- CSS Personalizado para Visual Mobile/PC ---
+st.markdown("""
+    <style>
+        .block-container {
+            padding-top: 2rem;
+            padding-bottom: 2rem;
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        p {
+            text-align: center;
+            color: #666;
+        }
+        .stButton button {
+            width: 100%; /* Botões ocupam largura total da coluna */
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+# --- Título e Cabeçalho ---
+st.title("📸 Foto 3x4 Studio")
+st.write("Transforme suas selfies em fotos de documento profissionais em segundos.")
 
 # --- Lógica de Estado (Session State) ---
 if 'rotation' not in st.session_state:
     st.session_state.rotation = 0
 if 'last_file' not in st.session_state:
     st.session_state.last_file = None
+if 'processed_image' not in st.session_state:
+    st.session_state.processed_image = None
 
-def add_white_background(image_input):
-    """Remove o fundo e insere um fundo branco"""
+def process_final_image(image_input):
+    """Remove o fundo, adiciona branco e redimensiona"""
     img_no_bg = remove(image_input)
     new_image = Image.new("RGBA", img_no_bg.size, "WHITE")
     new_image.paste(img_no_bg, (0, 0), img_no_bg)
-    return new_image.convert("RGB")
+    final_rgb = new_image.convert("RGB")
+    # Redimensiona para padrão 3x4cm (300 DPI) -> 354x472 pixels
+    return final_rgb.resize((354, 472), Image.Resampling.LANCZOS)
 
-# --- Interface do Usuário ---
-
-uploaded_file = st.file_uploader("Escolha uma imagem", type=["jpg", "jpeg", "png"])
+# --- PASSO 1: UPLOAD ---
+st.divider()
+uploaded_file = st.file_uploader("📂 1. Carregue sua foto", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
-    # CORREÇÃO AQUI: Usamos .name em vez de .id
-    # Verifica se o usuário trocou de arquivo (pelo nome) para resetar a rotação
+    # Resetar rotação se mudar o arquivo
     if st.session_state.last_file != uploaded_file.name:
         st.session_state.rotation = 0
+        st.session_state.processed_image = None # Limpa resultado anterior
         st.session_state.last_file = uploaded_file.name
 
-    # Carrega a imagem e corrige orientação EXIF
+    # Carregar imagem
     original_image = Image.open(uploaded_file)
     original_image = ImageOps.exif_transpose(original_image)
-    
-    # Aplica a rotação armazenada no estado
     rotated_image = original_image.rotate(st.session_state.rotation, expand=True)
 
-    col1, col2 = st.columns(2)
+    # --- PASSO 2: EDIÇÃO (Container) ---
+    st.divider()
+    st.markdown("#### ✂️ 2. Ajuste o enquadramento")
     
-    with col1:
-        st.subheader("1. Ajuste e Corte")
-        
-        # --- Botões de Rotação ---
-        col_rot1, col_rot2, col_rot3 = st.columns([1, 1, 2])
-        with col_rot1:
-            if st.button("↺ Girar Esq."):
-                st.session_state.rotation += 90
-                st.rerun() 
-        with col_rot2:
-            if st.button("↻ Girar Dir."):
-                st.session_state.rotation -= 90
-                st.rerun()
-        
-        # --- Ferramenta de Corte ---
+    with st.container(border=True):
+        # Controles de Rotação
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c2:
+            col_r1, col_r2 = st.columns(2)
+            with col_r1:
+                if st.button("↺ Esq."):
+                    st.session_state.rotation += 90
+                    st.session_state.processed_image = None
+                    st.rerun()
+            with col_r2:
+                if st.button("Dir. ↻"):
+                    st.session_state.rotation -= 90
+                    st.session_state.processed_image = None
+                    st.rerun()
+
+        # Ferramenta de Corte
+        # box_color='red' destaca bem. aspect_ratio fixo garante o 3x4.
         cropped_img = st_cropper(
             rotated_image,
             realtime_update=True,
-            box_color='red',
+            box_color='#FF0000',
             aspect_ratio=(3, 4),
             should_resize_image=True
         )
-        
-        st.caption("Use os botões para girar e a caixa vermelha para enquadrar.")
-        process_btn = st.button("✂️ Recortar e Remover Fundo", type="primary")
 
-    with col2:
-        st.subheader("2. Resultado Final")
+        st.info("💡 Dica: Arraste os cantos vermelhos para ajustar o rosto e ombros.")
         
-        if process_btn:
-            if cropped_img:
-                with st.spinner("Processando..."):
-                    try:
-                        # Processa a imagem
-                        final_image = add_white_background(cropped_img)
-                        
-                        # Redimensiona para padrão 3x4cm (300 DPI)
-                        final_image = final_image.resize((354, 472), Image.Resampling.LANCZOS)
-                        
-                        st.image(final_image, caption="Foto 3x4 Pronta", width=200)
+        # Botão de Processar Grande
+        if st.button("✨ Processar Foto e Remover Fundo", type="primary"):
+            with st.spinner("A IA está trabalhando..."):
+                try:
+                    result = process_final_image(cropped_img)
+                    st.session_state.processed_image = result
+                except Exception as e:
+                    st.error(f"Erro: {e}")
 
-                        # Preparar Download
-                        buf = io.BytesIO()
-                        final_image.save(buf, format="PNG")
-                        byte_im = buf.getvalue()
-                        
-                        st.success("Pronto!")
-                        
-                        st.download_button(
-                            label="📥 Baixar Imagem .PNG",
-                            data=byte_im,
-                            file_name="foto_3x4_final.png",
-                            mime="image/png"
-                        )
-                    except Exception as e:
-                        st.error(f"Erro: {e}")
+    # --- PASSO 3: RESULTADO (Só aparece se tiver processado) ---
+    if st.session_state.processed_image is not None:
+        st.divider()
+        st.markdown("#### ✅ 3. Resultado Final")
+        
+        with st.container(border=True):
+            col_res1, col_res2 = st.columns([1, 1])
+            
+            with col_res1:
+                # Mostra a imagem centralizada
+                st.image(st.session_state.processed_image, caption="Padrão Documento", width=177) # Metade de 354px para visualização
+            
+            with col_res2:
+                st.success("Sua foto está pronta!")
+                st.write("Tamanho: 3x4 cm")
+                st.write("Fundo: Branco")
+                
+                # Preparar buffer
+                buf = io.BytesIO()
+                st.session_state.processed_image.save(buf, format="PNG")
+                byte_im = buf.getvalue()
+
+                st.download_button(
+                    label="📥 Baixar Imagem (PNG)",
+                    data=byte_im,
+                    file_name="foto_3x4_final.png",
+                    mime="image/png",
+                    type="primary"
+                )
